@@ -1,6 +1,3 @@
-'''
-This is the text file that contains the ASCII representation of the bear.
-'''
 <pre style="color: {{ random_color }};">
               /  \.-"""-./  \
              /  ,`       `.  \
