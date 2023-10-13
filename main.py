@@ -8,7 +8,7 @@ import random
 app = Flask(__name__)
 @app.route('/')
 def index():
-    return render_template('index.html')
+    return render_template('index.html', random=random)
 @app.route('/bear.txt')
 def bear():
     random_color = '#%06x' % random.randint(0, 0xFFFFFF)
