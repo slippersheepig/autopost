@@ -3,22 +3,23 @@
 <head>
     <title>熊</title>
     <style>
-        body {
+        .image-container {
             display: flex;
             flex-wrap: wrap;
-            justify-content: center;
         }
-        img {
+        .image-container img {
             width: 200px;
             height: 200px;
             object-fit: cover;
-            margin: 10px;
+            margin: 5px;
         }
     </style>
 </head>
 <body>
-    {% for image in images %}
-        <img src="{{ url_for('static', filename='images/' + image) }}">
-    {% endfor %}
+    <div class="image-container">
+        {% for image in images %}
+            <img src="{{ image }}" alt="Image">
+        {% endfor %}
+    </div>
 </body>
 </html>
