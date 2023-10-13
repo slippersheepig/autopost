@@ -1,15 +1,18 @@
 '''
-This is the main file that runs the image display website.
+This is the main Python file that runs the Flask application.
 '''
 from flask import Flask, render_template
 from gevent.pywsgi import WSGIServer
-from image_manager import ImageManager
+from threading import Timer
+import random
 app = Flask(__name__, template_folder='.')
-image_manager = ImageManager()
 @app.route('/')
 def index():
-    images = image_manager.get_images()
-    return render_template('index.html', images=images)
+    return render_template('index.html')
+@app.route('/bear.txt')
+def bear():
+    random_color = '#%06x' % random.randint(0, 0xFFFFFF)
+    return render_template('bear.txt', random_color=random_color)
 if __name__ == '__main__':
     http_server = WSGIServer(("0.0.0.0", 5000), app)
     http_server.serve_forever()
