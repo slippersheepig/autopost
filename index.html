@@ -33,6 +33,7 @@ This is the HTML template file that will be rendered by Flask.
 <body>
     <div class="container">
         <div class="bear">
+            {% import random %}
             {% set random_color = '#%06x' % random.randint(0, 0xFFFFFF) %}
             {% include 'bear.txt' %}
         </div>
