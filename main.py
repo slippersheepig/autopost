@@ -5,10 +5,10 @@ from flask import Flask, render_template
 from gevent.pywsgi import WSGIServer
 from threading import Timer
 import random
-app = Flask(__name__, template_folder='.')
+app = Flask(__name__)
 @app.route('/')
 def index():
-    return render_template('index.html', random=random)
+    return render_template('index.html')
 @app.route('/bear.txt')
 def bear():
     random_color = '#%06x' % random.randint(0, 0xFFFFFF)
