@@ -1,0 +1,41 @@
+'''
+This is the HTML template file that will be rendered by Flask.
+'''
+<!DOCTYPE html>
+<html>
+<head>
+    <title>ASCII Bear</title>
+    <style>
+        body {
+            background-color: #f5f5f5;
+            color: #333333;
+            font-family: Arial, sans-serif;
+            margin: 0;
+            padding: 0;
+        }
+        .container {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+        }
+        .bear {
+            text-align: center;
+            font-size: 2rem;
+        }
+    </style>
+    <script>
+        setTimeout(function() {
+            location.reload();
+        }, 3600000); // Refresh every hour (in milliseconds)
+    </script>
+</head>
+<body>
+    <div class="container">
+        <div class="bear">
+            {% set random_color = '#%06x' % random.randint(0, 0xFFFFFF) %}
+            {% include 'bear.txt' %}
+        </div>
+    </div>
+</body>
+</html>
