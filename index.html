@@ -1,0 +1,28 @@
+'''
+This file contains the HTML template for displaying the images.
+'''
+<!DOCTYPE html>
+<html>
+<head>
+    <title>熊</title>
+    <style>
+        .image-container {
+            display: flex;
+            flex-wrap: wrap;
+        }
+        .image-container img {
+            width: 200px;
+            height: 200px;
+            object-fit: cover;
+            margin: 5px;
+        }
+    </style>
+</head>
+<body>
+    <div class="image-container">
+        {% for image in images %}
+            <img src="{{ image }}" alt="Image">
+        {% endfor %}
+    </div>
+</body>
+</html>
