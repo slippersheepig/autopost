@@ -128,7 +128,7 @@ def get_result():
         
     with pool_lock:
         if user_id not in task_pool:
-            return jsonify({"status": "idle", "data": "当前没有正在处理的问题，请先发送 ai+问题 进行提问。"})
+            return jsonify({"status": "idle", "data": "当前没有正在处理的问题，请先发送『ai 问题』（ai后面有空格）进行提问。"})
             
         task = task_pool[user_id]
         if task["status"] in ["done", "error"]:
@@ -136,7 +136,7 @@ def get_result():
             del task_pool[user_id]
             return jsonify({"status": "done", "data": res})
         elif task["status"] == "processing":
-            return jsonify({"status": "processing", "data": "模型还在疯狂输出中，请稍后再次发送『取件』..."})
+            return jsonify({"status": "processing", "data": "模型还在疯狂输出中，请稍后再次发送『ai 取件』（ai后面有空格）..."})
 
 @app.route('/clear', methods=['POST'])
 def clear_history():
