@@ -85,10 +85,23 @@ def fetch_llm(user_id, prompt):
                 history_pool[user_id].pop()
 
 # ==========================================
+# 极简鉴权拦截器
+# ==========================================
+def verify_auth():
+    """验证请求头中的 Authorization 是否与本地 API_KEY 匹配"""
+    auth_header = request.headers.get("Authorization")
+    if auth_header != f"Bearer {API_KEY}":
+        return False
+    return True
+
+# ==========================================
 # AI 缓冲代理 API 路由
 # ==========================================
 @app.route('/ask', methods=['POST'])
 def ask_question():
+    if not verify_auth():
+        return jsonify({"msg": "error", "error": "Unauthorized"}), 401
+
     data = request.get_json()
     if not data:
         return jsonify({"msg": "error", "error": "Invalid JSON"}), 400
@@ -106,26 +119,30 @@ def ask_question():
 
 @app.route('/get_result', methods=['GET'])
 def get_result():
+    if not verify_auth():
+        return jsonify({"status": "error", "data": "Unauthorized"}), 401
+
     user_id = request.args.get("user_id")
     if not user_id:
         return jsonify({"status": "error", "data": "Missing user_id"})
         
     with pool_lock:
         if user_id not in task_pool:
-            return jsonify({"status": "idle", "data": "当前没有正在处理的问题，请先发送『ai 问题』（ai后面有空格）进行提问。"})
+            return jsonify({"status": "idle", "data": "当前没有正在处理的问题，请先发送 ai+问题 进行提问。"})
             
         task = task_pool[user_id]
         if task["status"] in ["done", "error"]:
             res = task["result"]
-            # 关键点：只销毁瞬时的取件任务，保留 history_pool 里的会话上下文
             del task_pool[user_id]
             return jsonify({"status": "done", "data": res})
         elif task["status"] == "processing":
-            return jsonify({"status": "processing", "data": "模型还在疯狂输出中，请稍后再次发送『ai 取件』（ai后面有空格）..."})
+            return jsonify({"status": "processing", "data": "模型还在疯狂输出中，请稍后再次发送『取件』..."})
 
 @app.route('/clear', methods=['POST'])
 def clear_history():
-    """新增：允许用户主动清空多轮对话历史"""
+    if not verify_auth():
+        return jsonify({"msg": "error", "error": "Unauthorized"}), 401
+
     data = request.get_json()
     user_id = data.get("user_id") if data else None
     if not user_id:
