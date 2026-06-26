@@ -18,6 +18,9 @@ API_URL = os.environ.get("API_URL", "https://example.com")
 MODEL = os.environ.get("MODEL", "@cf/meta/llama-3.2-11b-vision-instruct")
 MAX_TOKENS = int(os.environ.get("MAX_TOKENS", "1024"))
 MAX_HISTORY = int(os.environ.get("MAX_HISTORY", "10"))
+CF_ACCOUNT_ID = os.environ.get("CF_ACCOUNT_ID")
+CF_API_TOKEN = os.environ.get("CF_API_TOKEN")
+INDEX_NAME = "wx-kb"
 
 # 线程锁，确保多用户并发访问字典时的绝对安全
 pool_lock = threading.Lock()
@@ -26,31 +29,71 @@ task_pool = {}
 # 历史记录池：持久存放每个用户的上下文历史 {"user_id": [{"role": "user", "content": "..."}, ...]}
 history_pool = {}
 
+def search_knowledge_base(query_text):
+    """新增功能：从 Cloudflare Vectorize 搜索最相关的文本"""
+    if not CF_ACCOUNT_ID or not CF_API_TOKEN:
+        return ""
+        
+    headers = {"Authorization": f"Bearer {CF_API_TOKEN}"}
+    ai_url = f"https://api.cloudflare.com/client/v4/accounts/{CF_ACCOUNT_ID}/ai/run/@cf/baai/bge-m3"
+    query_url = f"https://api.cloudflare.com/client/v4/accounts/{CF_ACCOUNT_ID}/vectorize/indexes/{INDEX_NAME}/query"
+    
+    try:
+        # 1. 把用户的问题变成向量
+        emb_res = requests.post(ai_url, headers=headers, json={"text": [query_text]}).json()
+        query_vector = emb_res["result"]["data"][0]
+        
+        # 2. 去数据库搜最相似的 3 个段落，并要求返回 metadata（原文）
+        search_res = requests.post(query_url, headers=headers, json={
+            "vector": query_vector,
+            "topK": 3,
+            "returnValues": False,
+            "returnMetadata": "all"
+        }).json()
+        
+        # 3. 拼接搜到的文本
+        contexts = [match["metadata"]["text"] for match in search_res["result"]["matches"]]
+        return "\n\n---\n\n".join(contexts)
+    except Exception as e:
+        print(f"检索失败: {e}")
+        return ""
+
 def fetch_llm(user_id, prompt):
-    """后台执行的大模型请求逻辑，自动组装历史上下文并动态截断"""
+    """升级版大模型请求逻辑：带 RAG 检索"""
     global task_pool, history_pool
     
+    # 【新增】去知识库里大海捞针
+    reference_context = search_knowledge_base(prompt)
+    
     with pool_lock:
-        # 如果是新用户，初始化其历史队列
         if user_id not in history_pool:
             history_pool[user_id] = []
             
-        # 将当前新问题追加进历史
         history_pool[user_id].append({"role": "user", "content": prompt})
         
-        # 核心逻辑：合理限制历史记录长度，只保留最近的 N 条记录
         if len(history_pool[user_id]) > MAX_HISTORY:
             history_pool[user_id] = history_pool[user_id][-MAX_HISTORY:]
             
-        # 复制一份当前的完整上下文用于发送请求，避免后台请求期间发生线程读写冲突
         current_messages = list(history_pool[user_id])
-        
-        # 初始化当前单次任务的取件状态
         task_pool[user_id] = {"status": "processing", "result": ""}
     
+    # 【核心：柔性提示词】巧妙地把知识库内容塞给系统，但不强制它只能用知识库
+    system_prompt = {
+        "role": "system", 
+        "content": (
+            "你是一个微信公众号的专属答疑助手。请参考下面提供的【知识库参考资料】来解答用户的问题。\n"
+            "如果参考资料中包含了答案，请优先基于资料内容进行专业、详尽的回答。\n"
+            "如果参考资料与用户的问题无关，或者为空，请不要提及『知识库没有』，直接使用你的通用知识库进行自然、友好的回答。\n\n"
+            f"【知识库参考资料】开始：\n{reference_context}\n【知识库参考资料】结束。"
+        )
+    }
+    
+    # 临时把这个强大的 System Prompt 插在对话记录的最前面发给模型
+    messages_to_send = [system_prompt] + current_messages
+
     payload = {
         "model": MODEL,
-        "messages": current_messages,
+        "messages": messages_to_send,
         "max_tokens": MAX_TOKENS
     }
     
