@@ -133,8 +133,24 @@ def get_result():
         task = task_pool[user_id]
         if task["status"] in ["done", "error"]:
             res = task["result"]
-            del task_pool[user_id]
-            return jsonify({"status": "done", "data": res})
+            
+            # 【关键修复】微信单条被动回复最多约 600 汉字，为了绝对安全，按 500 字切片
+            CHUNK_SIZE = 500
+            
+            if len(res) > CHUNK_SIZE:
+                # 截取前 500 个字符发给用户
+                chunk = res[:CHUNK_SIZE]
+                # 把剩下的内容重新存回任务池，等待用户下一次取件
+                task["result"] = res[CHUNK_SIZE:]
+                return jsonify({
+                    "status": "done", 
+                    "data": chunk + "\n\n...(字数超限，请再次发送『ai 取件』（ai后面有空格）获取剩余内容)"
+                })
+            else:
+                # 如果字数小于 500，一次性发完并彻底销毁任务
+                del task_pool[user_id]
+                return jsonify({"status": "done", "data": res})
+                
         elif task["status"] == "processing":
             return jsonify({"status": "processing", "data": "模型还在疯狂输出中，请稍后再次发送『ai 取件』（ai后面有空格）..."})
 
