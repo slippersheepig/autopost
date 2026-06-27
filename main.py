@@ -36,7 +36,7 @@ def search_knowledge_base(query_text):
         
     headers = {"Authorization": f"Bearer {CF_API_TOKEN}"}
     ai_url = f"https://api.cloudflare.com/client/v4/accounts/{CF_ACCOUNT_ID}/ai/run/@cf/baai/bge-m3"
-    query_url = f"https://api.cloudflare.com/client/v4/accounts/{CF_ACCOUNT_ID}/vectorize/indexes/{INDEX_NAME}/query"
+    query_url = f"https://api.cloudflare.com/client/v4/accounts/{CF_ACCOUNT_ID}/vectorize/v2/indexes/{INDEX_NAME}/query"
     
     try:
         # 1. 把用户的问题变成向量
