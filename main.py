@@ -4,6 +4,7 @@ This is the main Python file that runs the Flask application and the LLM bufferi
 import os
 import requests
 import random
+import uuid
 import threading
 from flask import Flask, render_template, request, jsonify
 from gevent.pywsgi import WSGIServer
