@@ -152,7 +152,10 @@ def generate_image(user_id, prompt):
     
     try:
         # 【关键优化 1】将超时放宽到 120 秒，给 9B 大模型充足的算力时间
-        res = requests.post(ai_url, headers=headers, json={"prompt": prompt}, timeout=120)
+        payload = {
+            "prompt": (None, prompt) # (文件名/字段名, 内容)
+        }
+        res = requests.post(ai_url, headers=headers, files=payload, timeout=120)
         
         if res.status_code == 200:
             image_filename = f"{uuid.uuid4().hex}.png"
