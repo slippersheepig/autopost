@@ -151,27 +151,43 @@ def generate_image(user_id, prompt):
     headers = {"Authorization": f"Bearer {CF_API_TOKEN}"}
     
     try:
-        # 绘图任务直接发给 CF
-        res = requests.post(ai_url, headers=headers, json={"prompt": prompt}, timeout=60)
+        # 【关键优化 1】将超时放宽到 120 秒，给 9B 大模型充足的算力时间
+        res = requests.post(ai_url, headers=headers, json={"prompt": prompt}, timeout=120)
         
         if res.status_code == 200:
-            # Cloudflare 返回的是原生图片二进制流，直接写成文件
             image_filename = f"{uuid.uuid4().hex}.png"
             image_path = os.path.join("static", image_filename)
             
-            with open(image_path, "wb") as f:
-                f.write(res.content)
+            # 【关键优化 2】防御性解析：处理 CF 可能返回 base64 JSON 的情况
+            content_type = res.headers.get("Content-Type", "")
+            if "application/json" in content_type:
+                import base64
+                data = res.json()
+                if "result" in data and "image" in data["result"]:
+                    img_bytes = base64.b64decode(data["result"]["image"])
+                    with open(image_path, "wb") as f:
+                        f.write(img_bytes)
+                else:
+                    raise Exception("未知的JSON图像返回结构")
+            else:
+                # 正常的二进制流直接写入
+                with open(image_path, "wb") as f:
+                    f.write(res.content)
             
             with pool_lock:
                 task_pool[user_id]["result"] = image_filename
-                task_pool[user_id]["status"] = "done_image" # 专属的图片取件状态
+                task_pool[user_id]["status"] = "done_image" 
         else:
+            # 【关键修复】直接把 Cloudflare 真实的 HTTP 状态码和报错内容抛给用户看！
+            error_msg = f"HTTP {res.status_code}: {res.text}"
+            print(f"日志报错: {error_msg}")
             with pool_lock:
-                task_pool[user_id]["result"] = f"出图失败，请稍后再试。"
+                task_pool[user_id]["result"] = f"出图失败，云端返回: {error_msg}"
                 task_pool[user_id]["status"] = "error"
+                
     except Exception as e:
         with pool_lock:
-            task_pool[user_id]["result"] = f"请求异常: {str(e)}"
+            task_pool[user_id]["result"] = f"请求异常或超时: {str(e)}"
             task_pool[user_id]["status"] = "error"
 
 # ==========================================
