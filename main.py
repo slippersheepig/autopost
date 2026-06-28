@@ -8,7 +8,9 @@ import threading
 from flask import Flask, render_template, request, jsonify
 from gevent.pywsgi import WSGIServer
 
-app = Flask(__name__)
+app = Flask(__name__, static_folder='static', static_url_path='/static')
+if not os.path.exists("static"):
+    os.makedirs("static")
 
 # ==========================================
 # 环境变量配置
@@ -138,6 +140,61 @@ def verify_auth():
     return True
 
 # ==========================================
+# 新增：画图后台逻辑
+# ==========================================
+def generate_image(user_id, prompt):
+    global task_pool
+    with pool_lock:
+        task_pool[user_id] = {"status": "processing", "result": ""}
+    
+    ai_url = f"https://api.cloudflare.com/client/v4/accounts/{CF_ACCOUNT_ID}/ai/run/@cf/black-forest-labs/flux-2-klein-9b"
+    headers = {"Authorization": f"Bearer {CF_API_TOKEN}"}
+    
+    try:
+        # 绘图任务直接发给 CF
+        res = requests.post(ai_url, headers=headers, json={"prompt": prompt}, timeout=60)
+        
+        if res.status_code == 200:
+            # Cloudflare 返回的是原生图片二进制流，直接写成文件
+            image_filename = f"{uuid.uuid4().hex}.png"
+            image_path = os.path.join("static", image_filename)
+            
+            with open(image_path, "wb") as f:
+                f.write(res.content)
+            
+            with pool_lock:
+                task_pool[user_id]["result"] = image_filename
+                task_pool[user_id]["status"] = "done_image" # 专属的图片取件状态
+        else:
+            with pool_lock:
+                task_pool[user_id]["result"] = f"出图失败，请稍后再试。"
+                task_pool[user_id]["status"] = "error"
+    except Exception as e:
+        with pool_lock:
+            task_pool[user_id]["result"] = f"请求异常: {str(e)}"
+            task_pool[user_id]["status"] = "error"
+
+# ==========================================
+# 路由修改与新增
+# ==========================================
+# 【新增 2】画图专用入口
+@app.route('/draw', methods=['POST'])
+def draw_image():
+    if not verify_auth():
+        return jsonify({"msg": "error", "error": "Unauthorized"}), 401
+
+    data = request.get_json()
+    user_id = data.get("user_id")
+    prompt = data.get("prompt")
+    
+    if not user_id or not prompt:
+        return jsonify({"msg": "error", "error": "Missing params"}), 400
+
+    thread = threading.Thread(target=generate_image, args=(user_id, prompt))
+    thread.start()
+    return jsonify({"msg": "ok"})
+
+# ==========================================
 # AI 缓冲代理 API 路由
 # ==========================================
 @app.route('/ask', methods=['POST'])
@@ -160,6 +217,7 @@ def ask_question():
     
     return jsonify({"msg": "ok"})
 
+# 【修改 3】取件路由增加对图片的特殊分发处理
 @app.route('/get_result', methods=['GET'])
 def get_result():
     if not verify_auth():
@@ -193,7 +251,12 @@ def get_result():
                 # 如果字数小于 500，一次性发完并彻底销毁任务
                 del task_pool[user_id]
                 return jsonify({"status": "done", "data": res})
-                
+
+        elif task["status"] == "done_image":
+            res = task["result"] # 拿到刚才生成的文件名
+            del task_pool[user_id]
+            return jsonify({"status": "done_image", "data": res})
+            
         elif task["status"] == "processing":
             return jsonify({"status": "processing", "data": "模型还在疯狂输出中，请稍后再次发送『ai 取件』（ai后面有空格）..."})
 
