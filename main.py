@@ -148,7 +148,7 @@ def generate_image(user_id, prompt):
     with pool_lock:
         task_pool[user_id] = {"status": "processing", "result": ""}
     
-    ai_url = f"https://api.cloudflare.com/client/v4/accounts/{CF_ACCOUNT_ID}/ai/run/@cf/black-forest-labs/flux-2-klein-9b"
+    ai_url = f"https://api.cloudflare.com/client/v4/accounts/{CF_ACCOUNT_ID}/ai/run/@cf/black-forest-labs/flux-2-klein-4b"
     headers = {"Authorization": f"Bearer {CF_API_TOKEN}"}
     
     try:
