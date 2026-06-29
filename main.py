@@ -85,7 +85,7 @@ def get_web_search_context(query):
         return ""
 
 # ==========================================
-# 终极版：时间感知 + RAG Fallback
+# 完美版：混合上下文融合架构 (Hybrid Context Fusion)
 # ==========================================
 def fetch_llm(user_id, prompt):
     global task_pool, history_pool
@@ -93,54 +93,48 @@ def fetch_llm(user_id, prompt):
     # 【新增】获取当前准确的北京时间 (UTC+8)
     bj_tz = timezone(timedelta(hours=8))
     current_time = datetime.now(bj_tz).strftime("%Y年%m月%d日 %H:%M %A")
+
+    print(f"🚀启动并行检索流 -> 提问: {prompt}")
     
-    # 1. 没有任何废话，第一步直接去本地知识库“摸底”
+    # 2. 同时进货：不管三七二十一，两路数据直接全量抓取
     try:
         kb_context = search_knowledge_base(prompt)
     except Exception as e:
-        print(f"知识库检索异常: {e}")
+        print(f"本地知识库检索异常: {e}")
         kb_context = ""
 
-    # 2. 极简路由决策：判断知识库是否真的掏出了干货
-    # 如果没货（或者字数少于 15 个字），直接触发全网搜索
-    if not kb_context or len(kb_context.strip()) < 15:
-        print(f"🔄本地知识库未命中，强制启动【全网实时搜索】 -> 提问: {prompt}")
-        
+    try:
         web_context = get_web_search_context(prompt)
-        # 【关键修改】在系统设定最开头，狠狠地把当前时间刻进它的脑子里
-        system_role_desc = (
-            f"你是一个微信公众号的智能助手。【重要：当前真实北京时间是 {current_time}】。\n"
-            "当前处于【全网实时搜索】模式。\n"
-            "请严格参考以下【联网搜索资料】来解答用户的问题，提取资料中与“当前时间”匹配的最新信息，"
-            "并在回答末尾附上参考过的原文链接。\n"
-            "如果联网资料不足以回答，请尽情结合你自身的通用知识库进行解答。\n\n"
-            f"【联网搜索资料】开始：\n{web_context}\n【联网搜索资料】结束。"
-        )
-    else:
-        # 知识库里有货，老老实实走私有知识问答
-        print(f"📚本地知识库命中（长度: {len(kb_context)}），走【私有知识库】模式")
-        # 【关键修改】本地知识库模式同样注入时间，防止它对你的业务时效性产生误判
-        system_role_desc = (
-            f"你是一个微信公众号的专属答疑助手。【重要：当前真实北京时间是 {current_time}】。\n"
-            "请优先参考下面提供的【知识库参考资料】来解答。\n"
-            "如果资料包含答案，请详尽回答。如果知识库与问题无关，请直接使用通用知识自然回答。\n\n"
-            f"【知识库参考资料】开始：\n{kb_context}\n【知识库参考资料】结束。"
-        )
+    except Exception as e:
+        print(f"全网实时搜索异常: {e}")
+        web_context = ""
 
-    # 3. 组装历史记录
+    # 【调试日志】可以在控制台清晰看到两路数据的丰满程度
+    print(f"📊[混合检索数据量] 知识库: {len(kb_context if kb_context else '')} 字 | 全网搜索: {len(web_context if web_context else '')} 字")
+
+    # 3. 编写“降维打击”系统提示词，把整合/抛弃的逻辑完全交给大模型的大脑
+    system_role_desc = (
+        f"你是一个微信公众号的智能助手。【重要提示：当前真实北京时间是 {current_time}】。\n"
+        "为了协助你完成最高质量的回答，后台系统已为你同时检索了【本地私有知识库】和【全网实时搜索引擎】。\n\n"
+        "请你展现出色的信息检索与整合能力，严格遵循以下融合逻辑：\n"
+        "1. 【信息价值评估】：请自行审视下面的【本地知识库参考资料】。如果其内容与用户提问毫无关联、或者仅包含“未找到/抱歉/无匹配”等系统无货填充词，请在心中果断将其评估为【无效干扰信息】，并在后续回答中【完全忽略它】，仅保留并完全基于【联网搜索资料】进行作答。\n"
+        "2. 【深度跨域整合】：如果【本地知识库参考资料】包含了与提问强相关的私有知识（如技术参数、私有文档），同时【联网搜索资料】提供了最新的全网时效性进展（如今日动态、最新新闻），请将两份资料【有机融合】。用最新的联网时效补全私有知识，或用私有知识深化网络信息，给出兼具时效性与专业深度的完美回答。\n"
+        "3. 【时间锚定守则】：对于任何涉及时间（今天、今年、近一周、最近）的问题，必须结合系统提供的当前真实北京时间进行严格对齐，拒绝对历史死知识的幻觉。\n"
+        "4. 【溯源规范】：如果回答中采用了联网搜索的内容，请务必在回答的尾部另起一行附上参考过的网络原文链接。\n\n"
+        f"【本地知识库参考资料】开始：\n{kb_context}\n【本地知识库参考资料】结束。\n\n"
+        f"【联网搜索资料】开始：\n{web_context}\n【联网搜索资料】结束。"
+    )
+
+    # 4. 组装历史记录
     with pool_lock:
         if user_id not in history_pool:
             history_pool[user_id] = []
-            
         history_pool[user_id].append({"role": "user", "content": prompt})
-        
         if len(history_pool[user_id]) > MAX_HISTORY:
             history_pool[user_id] = history_pool[user_id][-MAX_HISTORY:]
-            
         current_messages = list(history_pool[user_id])
         task_pool[user_id] = {"status": "processing", "result": ""}
     
-    # 压入系统提示词
     system_prompt = {"role": "system", "content": system_role_desc}
     messages_to_send = [system_prompt] + current_messages
 
@@ -150,10 +144,9 @@ def fetch_llm(user_id, prompt):
         "max_tokens": MAX_TOKENS
     }
     
-    # 4. 向大模型发起最终请求
+    # 5. 向Cloudflare发起最终请求
     try:
         res = requests.post(API_URL, json=payload, headers={"Authorization": f"Bearer {API_KEY}"}, timeout=120)
-        
         if res.status_code == 200:
             data = res.json()
             response_text = data["choices"][0]["message"]["content"]
@@ -162,12 +155,10 @@ def fetch_llm(user_id, prompt):
                 history_pool[user_id].append({"role": "assistant", "content": response_text})
                 if len(history_pool[user_id]) > MAX_HISTORY:
                     history_pool[user_id] = history_pool[user_id][-MAX_HISTORY:]
-                    
                 task_pool[user_id]["result"] = response_text
                 task_pool[user_id]["status"] = "done"
         else:
             raise Exception(f"HTTP {res.status_code}: {res.text}")
-            
     except Exception as e:
         print(f"请求失败: {e}")
         with pool_lock:
