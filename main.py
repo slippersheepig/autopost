@@ -2,6 +2,7 @@
 This is the main Python file that runs the Flask application and the LLM buffering proxy with session history.
 '''
 import os
+import re
 import requests
 import random
 import uuid
@@ -34,8 +35,42 @@ task_pool = {}
 # 历史记录池：持久存放每个用户的上下文历史 {"user_id": [{"role": "user", "content": "..."}, ...]}
 history_pool = {}
 
+def clean_markdown_for_wechat(md_text):
+    if not md_text:
+        return ""
+    
+    text = md_text
+
+    # 1. 处理 LaTeX 常见符号
+    # 把 $\rightarrow$, \rightarrow, -> 等都统一替换成漂亮的 Unicode 箭头
+    text = re.sub(r'\$?\\rightarrow\$?', '→', text)
+    text = re.sub(r'\$?\\leftarrow\$?', '←', text)
+    text = re.sub(r'\$?\\Rightarrow\$?', '⇒', text)
+    
+    # 2. 转换超链接: [文字](URL) -> <a href="URL">文字</a>
+    text = re.sub(r'\[([^\]]+)\]\((http[s]?://[^\)]+)\)', r'<a href="\2">\1</a>', text)
+    
+    # 3. 转换标题: ### 标题 -> 【标题】
+    text = re.sub(r'^#+\s+(.*)$', r'【\1】', text, flags=re.MULTILINE)
+    
+    # 4. 移除加粗和斜体符号
+    text = re.sub(r'\*\*(.*?)\*\*', r'\1', text)
+    text = re.sub(r'\*(.*?)\*', r'\1', text)
+    
+    # 5. 优化无序列表
+    text = re.sub(r'^\s*[-*]\s+', '• ', text, flags=re.MULTILINE)
+    
+    # 6. 清理代码块记号
+    text = re.sub(r'```[a-zA-Z]*\n', '\n', text)
+    text = re.sub(r'```', '', text)
+    
+    # 7. 处理多余的连续换行
+    text = re.sub(r'\n{3,}', '\n\n', text)
+    
+    return text.strip()
+
 def search_knowledge_base(query_text):
-    """新增功能：从 Cloudflare Vectorize 搜索最相关的文本"""
+    """从 Cloudflare Vectorize 搜索最相关的文本"""
     if not CF_ACCOUNT_ID or not CF_API_TOKEN:
         return ""
         
@@ -64,7 +99,7 @@ def search_knowledge_base(query_text):
         return ""
 
 # ==========================================
-# 新增：联网搜索辅助函数
+# 联网搜索辅助函数
 # ==========================================
 def get_web_search_context(query):
     """使用 DuckDuckGo 获取全网最新信息"""
@@ -85,18 +120,18 @@ def get_web_search_context(query):
         return ""
 
 # ==========================================
-# 完美版：混合上下文融合架构 (Hybrid Context Fusion)
+# 混合上下文融合架构 (Hybrid Context Fusion)
 # ==========================================
 def fetch_llm(user_id, prompt):
     global task_pool, history_pool
 
-    # 【新增】获取当前准确的北京时间 (UTC+8)
+    # 获取当前准确的北京时间 (UTC+8)
     bj_tz = timezone(timedelta(hours=8))
     current_time = datetime.now(bj_tz).strftime("%Y年%m月%d日 %H:%M %A")
 
     print(f"🚀启动并行检索流 -> 提问: {prompt}")
     
-    # 2. 同时进货：不管三七二十一，两路数据直接全量抓取
+    # 同时进货：不管三七二十一，两路数据直接全量抓取
     try:
         kb_context = search_knowledge_base(prompt)
     except Exception as e:
@@ -112,7 +147,7 @@ def fetch_llm(user_id, prompt):
     # 【调试日志】可以在控制台清晰看到两路数据的丰满程度
     print(f"📊[混合检索数据量] 知识库: {len(kb_context if kb_context else '')} 字 | 全网搜索: {len(web_context if web_context else '')} 字")
 
-    # 3. 编写“降维打击”系统提示词，把整合/抛弃的逻辑完全交给大模型的大脑
+    # 编写“降维打击”系统提示词，把整合/抛弃的逻辑完全交给大模型的大脑
     system_role_desc = (
         f"你是一个微信公众号的智能助手。【重要提示：当前真实北京时间是 {current_time}】。\n"
         "为了协助你完成最高质量的回答，后台系统已为你同时检索了【本地私有知识库】和【全网实时搜索引擎】。\n\n"
@@ -125,7 +160,7 @@ def fetch_llm(user_id, prompt):
         f"【联网搜索资料】开始：\n{web_context}\n【联网搜索资料】结束。"
     )
 
-    # 4. 组装历史记录
+    # 组装历史记录
     with pool_lock:
         if user_id not in history_pool:
             history_pool[user_id] = []
@@ -144,7 +179,7 @@ def fetch_llm(user_id, prompt):
         "max_tokens": MAX_TOKENS
     }
     
-    # 5. 向Cloudflare发起最终请求
+    # 向Cloudflare发起最终请求
     try:
         res = requests.post(API_URL, json=payload, headers={"Authorization": f"Bearer {API_KEY}"}, timeout=120)
         if res.status_code == 200:
@@ -178,7 +213,7 @@ def verify_auth():
     return True
 
 # ==========================================
-# 新增：画图后台逻辑
+# 画图后台逻辑
 # ==========================================
 def generate_image(user_id, prompt):
     global task_pool
@@ -189,7 +224,7 @@ def generate_image(user_id, prompt):
     headers = {"Authorization": f"Bearer {CF_API_TOKEN}"}
     
     try:
-        # 【关键优化 1】将超时放宽到 120 秒，给 9B 大模型充足的算力时间
+        # 将超时放宽到 120 秒，给大模型充足的算力时间
         payload = {
             "prompt": (None, prompt) # (文件名/字段名, 内容)
         }
@@ -199,7 +234,7 @@ def generate_image(user_id, prompt):
             image_filename = f"{uuid.uuid4().hex}.png"
             image_path = os.path.join("static", image_filename)
             
-            # 【关键优化 2】防御性解析：处理 CF 可能返回 base64 JSON 的情况
+            # 防御性解析：处理 CF 可能返回 base64 JSON 的情况
             content_type = res.headers.get("Content-Type", "")
             if "application/json" in content_type:
                 import base64
@@ -219,7 +254,7 @@ def generate_image(user_id, prompt):
                 task_pool[user_id]["result"] = image_filename
                 task_pool[user_id]["status"] = "done_image" 
         else:
-            # 【关键修复】直接把 Cloudflare 真实的 HTTP 状态码和报错内容抛给用户看！
+            # 直接把 Cloudflare 真实的 HTTP 状态码和报错内容抛给用户看！
             error_msg = f"HTTP {res.status_code}: {res.text}"
             print(f"日志报错: {error_msg}")
             with pool_lock:
@@ -234,7 +269,7 @@ def generate_image(user_id, prompt):
 # ==========================================
 # 路由修改与新增
 # ==========================================
-# 【新增 2】画图专用入口
+# 画图专用入口
 @app.route('/draw', methods=['POST'])
 def draw_image():
     if not verify_auth():
@@ -274,7 +309,7 @@ def ask_question():
     
     return jsonify({"msg": "ok"})
 
-# 【修改 3】取件路由增加对图片的特殊分发处理
+# 取件路由增加对图片的特殊分发处理
 @app.route('/get_result', methods=['GET'])
 def get_result():
     if not verify_auth():
@@ -292,7 +327,7 @@ def get_result():
         if task["status"] in ["done", "error"]:
             res = task["result"]
             
-            # 【关键修复】微信单条被动回复最多约 600 汉字，为了绝对安全，按 500 字切片
+            # 微信单条被动回复最多约 600 汉字，为了绝对安全，按 500 字切片
             CHUNK_SIZE = 500
             
             if len(res) > CHUNK_SIZE:
