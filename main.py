@@ -9,6 +9,7 @@ import threading
 from flask import Flask, render_template, request, jsonify
 from gevent.pywsgi import WSGIServer
 from duckduckgo_search import DDGS
+from datetime import datetime, timedelta, timezone
 
 app = Flask(__name__, static_folder='static', static_url_path='/static')
 if not os.path.exists("static"):
@@ -84,10 +85,14 @@ def get_web_search_context(query):
         return ""
 
 # ==========================================
-# 终极版：极简 RAG Fallback（查库无果则直接查网）
+# 终极版：时间感知 + RAG Fallback
 # ==========================================
 def fetch_llm(user_id, prompt):
     global task_pool, history_pool
+
+    # 【新增】获取当前准确的北京时间 (UTC+8)
+    bj_tz = timezone(timedelta(hours=8))
+    current_time = datetime.now(bj_tz).strftime("%Y年%m月%d日 %H:%M %A")
     
     # 1. 没有任何废话，第一步直接去本地知识库“摸底”
     try:
@@ -102,20 +107,23 @@ def fetch_llm(user_id, prompt):
         print(f"🔄本地知识库未命中，强制启动【全网实时搜索】 -> 提问: {prompt}")
         
         web_context = get_web_search_context(prompt)
+        # 【关键修改】在系统设定最开头，狠狠地把当前时间刻进它的脑子里
         system_role_desc = (
-            "你是一个微信公众号的智能助手。当前处于【全网实时搜索】模式。\n"
-            "请严格参考以下【联网搜索资料】来解答用户的问题。你可以合理整合网络最新结果，"
-            "并在回答末尾附上你参考过的原文链接。\n"
-            "如果联网资料依然不足以回答，请尽情结合你自身的通用知识库进行详尽解答。\n\n"
+            f"你是一个微信公众号的智能助手。【重要：当前真实北京时间是 {current_time}】。\n"
+            "当前处于【全网实时搜索】模式。\n"
+            "请严格参考以下【联网搜索资料】来解答用户的问题，提取资料中与“当前时间”匹配的最新信息，"
+            "并在回答末尾附上参考过的原文链接。\n"
+            "如果联网资料不足以回答，请尽情结合你自身的通用知识库进行解答。\n\n"
             f"【联网搜索资料】开始：\n{web_context}\n【联网搜索资料】结束。"
         )
     else:
         # 知识库里有货，老老实实走私有知识问答
         print(f"📚本地知识库命中（长度: {len(kb_context)}），走【私有知识库】模式")
+        # 【关键修改】本地知识库模式同样注入时间，防止它对你的业务时效性产生误判
         system_role_desc = (
-            "你是一个微信公众号的专属答疑助手。请优先参考下面提供的【知识库参考资料】来解答。\n"
-            "如果参考资料中包含了答案，请优先基于资料内容进行专业、详尽的回答。\n"
-            "如果知识库与问题无关，请直接使用你的通用知识进行自然、友好的回答。\n\n"
+            f"你是一个微信公众号的专属答疑助手。【重要：当前真实北京时间是 {current_time}】。\n"
+            "请优先参考下面提供的【知识库参考资料】来解答。\n"
+            "如果资料包含答案，请详尽回答。如果知识库与问题无关，请直接使用通用知识自然回答。\n\n"
             f"【知识库参考资料】开始：\n{kb_context}\n【知识库参考资料】结束。"
         )
 
