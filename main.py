@@ -201,8 +201,7 @@ def fetch_llm(user_id, prompt):
         
         if res.status_code == 200:
             data = res.json()
-            # 兼容 Cloudflare Workers AI 的返回格式
-            response_text = data["result"]["response"]
+            response_text = data["choices"][0]["message"]["content"]
             
             with pool_lock:
                 history_pool[user_id].append({"role": "assistant", "content": response_text})
