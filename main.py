@@ -8,6 +8,7 @@ import uuid
 import threading
 from flask import Flask, render_template, request, jsonify
 from gevent.pywsgi import WSGIServer
+from duckduckgo_search import DDGS
 
 app = Flask(__name__, static_folder='static', static_url_path='/static')
 if not os.path.exists("static"):
@@ -61,13 +62,97 @@ def search_knowledge_base(query_text):
         print(f"检索失败: {e}")
         return ""
 
+# ==========================================
+# 新增：联网搜索辅助函数
+# ==========================================
+def get_web_search_context(query):
+    """使用 DuckDuckGo 获取全网最新信息"""
+    try:
+        with DDGS() as ddgs:
+            # 搜索前 3 条网页结果
+            results = list(ddgs.text(query, max_results=3))
+            
+            if not results:
+                return "未找到相关的网络搜索结果。"
+                
+            context = ""
+            for i, r in enumerate(results):
+                context += f"[{i+1}] 标题：{r.get('title', '')}\n摘要：{r.get('body', '')}\n链接：{r.get('href', '')}\n\n"
+            return context
+    except Exception as e:
+        print(f"DuckDuckGo搜索出错: {e}")
+        return ""
+
+# ==========================================
+# 新增：意图分析路由器 (Intent Router)
+# ==========================================
+def analyze_intent(query):
+    """
+    调用极速小模型，判断用户意图是否需要联网。
+    返回 True (需要联网) 或 False (查知识库/闲聊)
+    """
+    # 强制使用速度最快的 8B 模型作为路由，不消耗主模型算力
+    router_model = "@cf/meta/llama-3.1-8b-instruct-fp8"
+    ai_url = f"https://api.cloudflare.com/client/v4/accounts/{CF_ACCOUNT_ID}/ai/run/{router_model}"
+    headers = {"Authorization": f"Bearer {CF_API_TOKEN}"}
+    
+    # 极其严苛的系统提示词，逼迫模型只输出 YES 或 NO
+    router_prompt = (
+        "你是一个意图识别引擎。你的任务是判断用户的提问是否需要通过互联网搜索引擎获取最新资讯、"
+        "实时数据、或是超出常规知识库的广泛网络信息。\n"
+        "如果需要联网搜索，请严格且仅输出一个词：YES。\n"
+        "如果是常规问答、闲聊、或者你认为本地知识库可能包含的内容，请严格且仅输出一个词：NO。\n"
+        "不要输出任何标点符号和其他解释。"
+    )
+    
+    payload = {
+        "messages": [
+            {"role": "system", "content": router_prompt},
+            {"role": "user", "content": query}
+        ],
+        "max_tokens": 5, # 极小 token，保证光速响应
+        "temperature": 0.1 # 降到最低，保证输出的确定性
+    }
+    
+    try:
+        res = requests.post(ai_url, headers=headers, json=payload, timeout=5)
+        if res.status_code == 200:
+            decision = res.json()["result"]["response"].strip().upper()
+            print(f"🚦意图路由判断结果: {decision} | 用户问题: {query}")
+            return "YES" in decision
+        return False
+    except Exception as e:
+        print(f"路由判断异常: {e}")
+        return False # 异常情况下，默认走本地知识库或闲聊
+
+# ==========================================
+# 升级：完全自动化的 fetch_llm
+# ==========================================
 def fetch_llm(user_id, prompt):
-    """升级版大模型请求逻辑：带 RAG 检索"""
+    """后台任务：自动路由 + 自动组装 + 大模型生成"""
     global task_pool, history_pool
     
-    # 【新增】去知识库里大海捞针
-    reference_context = search_knowledge_base(prompt)
+    # 1. 过第一道关卡：意图路由
+    needs_search = analyze_intent(prompt)
     
+    # 2. 根据路由结果，去不同的“仓库”进货
+    if needs_search:
+        reference_context = get_web_search_context(prompt)
+        system_role_desc = (
+            "你是一个微信公众号的智能助手。当前处于【全网实时搜索】模式。\n"
+            "请严格参考以下【联网搜索资料】来解答用户的问题，并在回答末尾附上原文链接。\n"
+            "如果资料与问题无关，请诚实说明未搜到相关信息。\n\n"
+            f"【联网搜索资料】开始：\n{reference_context}\n【联网搜索资料】结束。"
+        )
+    else:
+        reference_context = search_knowledge_base(prompt)
+        system_role_desc = (
+            "你是一个微信公众号的专属答疑助手。请优先参考下面提供的【知识库参考资料】来解答。\n"
+            "如果资料中包含答案，请详细回答。如果资料无关或为空，请使用你的通用知识进行自然回答，不要提及『知识库为空』。\n\n"
+            f"【知识库参考资料】开始：\n{reference_context}\n【知识库参考资料】结束。"
+        )
+
+    # 3. 组装历史记录
     with pool_lock:
         if user_id not in history_pool:
             history_pool[user_id] = []
@@ -80,18 +165,7 @@ def fetch_llm(user_id, prompt):
         current_messages = list(history_pool[user_id])
         task_pool[user_id] = {"status": "processing", "result": ""}
     
-    # 【核心：柔性提示词】巧妙地把知识库内容塞给系统，但不强制它只能用知识库
-    system_prompt = {
-        "role": "system", 
-        "content": (
-            "你是一个微信公众号的专属答疑助手。请参考下面提供的【知识库参考资料】来解答用户的问题。\n"
-            "如果参考资料中包含了答案，请优先基于资料内容进行专业、详尽的回答。\n"
-            "如果参考资料与用户的问题无关，或者为空，请不要提及『知识库没有』，直接使用你的通用知识库进行自然、友好的回答。\n\n"
-            f"【知识库参考资料】开始：\n{reference_context}\n【知识库参考资料】结束。"
-        )
-    }
-    
-    # 临时把这个强大的 System Prompt 插在对话记录的最前面发给模型
+    system_prompt = {"role": "system", "content": system_role_desc}
     messages_to_send = [system_prompt] + current_messages
 
     payload = {
@@ -100,33 +174,24 @@ def fetch_llm(user_id, prompt):
         "max_tokens": MAX_TOKENS
     }
     
+    # 4. 呼叫主模型
     try:
-        res = requests.post(
-            API_URL, 
-            json=payload, 
-            headers={"Authorization": f"Bearer {API_KEY}"},
-            timeout=120
-        )
+        res = requests.post(API_URL, json=payload, headers={"Authorization": f"Bearer {API_KEY}"}, timeout=120)
         data = res.json()
-        response_text = data["choices"][0]["message"]["content"]
+        response_text = data["result"]["response"]
         
         with pool_lock:
-            # 将模型的回答也追加进该用户的历史记录中
             history_pool[user_id].append({"role": "assistant", "content": response_text})
-            
-            # 再次截断确保历史长度合规
             if len(history_pool[user_id]) > MAX_HISTORY:
                 history_pool[user_id] = history_pool[user_id][-MAX_HISTORY:]
                 
-            # 更新单次任务状态，供用户“取件”
             task_pool[user_id]["result"] = response_text
             task_pool[user_id]["status"] = "done"
             
     except Exception as e:
         with pool_lock:
-            task_pool[user_id]["result"] = f"请求出错: {str(e)}"
+            task_pool[user_id]["result"] = f"主模型请求出错: {str(e)}"
             task_pool[user_id]["status"] = "error"
-            # 容错：如果请求失败，把刚放进去的问题弹出来，避免污染上下文
             if history_pool[user_id] and history_pool[user_id][-1]["role"] == "user":
                 history_pool[user_id].pop()
 
@@ -228,11 +293,13 @@ def ask_question():
         
     user_id = data.get("user_id")
     text = data.get("text")
+
+    use_search = data.get("use_search", False)
     
     if not user_id or not text:
         return jsonify({"msg": "error", "error": "Missing user_id or text"}), 400
 
-    thread = threading.Thread(target=fetch_llm, args=(user_id, text))
+    thread = threading.Thread(target=fetch_llm, args=(user_id, text, use_search))
     thread.start()
     
     return jsonify({"msg": "ok"})
