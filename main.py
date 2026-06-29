@@ -84,54 +84,42 @@ def get_web_search_context(query):
         return ""
 
 # ==========================================
-# 升级：确定性 RAG Fallback（知识库优先 -> 无果则联网）
+# 终极版：极简 RAG Fallback（查库无果则直接查网）
 # ==========================================
 def fetch_llm(user_id, prompt):
-    """后台任务：本地知识库优先，无结果或触发强时效词则强制全网搜索"""
     global task_pool, history_pool
     
-    # 1. 策略一：强时效性关键词硬拦截（双保险）
-    # 只要用户提问包含这些词，大概率本地知识库是没有的，直接准备走搜索
-    realtime_keywords = ["今天", "昨日", "昨天", "前天", "明天", "后天", "现在", "目前", "当前", "最新", "近期", "最近", "今年", "去年", "前年", "明年", "本月", "上个月", "下个月", "本周", "上周", "下周", "今天上午", "今天下午", "今晚", "今晚", "今早", "天气", "气温", "降雨", "下雨", "台风", "空气质量", "AQI", "预报", "温度", "新闻", "热搜", "热点", "头条", "事件", "爆料", "股价", "股票", "A股", "港股", "美股", "汇率", "美元", "人民币", "黄金", "原油", "基金", "比特币", "BTC", "ETH", "加密货币", "价格", "售价", "多少钱", "优惠", "折扣", "活动", "促销", "库存", "现货", "发售", "比赛", "赛程", "比分", "排名", "积分榜", "冠军", "直播", "转会", "电影票房", "票房", "上映", "演唱会", "演出", "音乐节", "航班", "火车", "高铁", "余票", "晚点", "地铁", "公交", "路况", "堵车", "附近", "周边", "离我最近", "最近的", "哪里有", "餐厅", "酒店", "医院", "银行", "查一下", "搜一下", "搜索", "帮我查", "帮我搜", "联网", "上网", "在线查询", "什么时候", "截止", "截止日期", "开始时间", "结束时间"]
-    is_realtime_query = any(kw in prompt for kw in realtime_keywords)
-    
-    # 2. 策略二：去本地知识库“进货”并验证
-    # 假设你的 search_knowledge_base 在未命中时会返回 "" 或很短的提示
-    kb_context = ""
-    if not is_realtime_query:
-        try:
-            kb_context = search_knowledge_base(prompt)
-        except Exception as e:
-            print(f"知识库检索异常: {e}")
-            kb_context = ""
+    # 1. 没有任何废话，第一步直接去本地知识库“摸底”
+    try:
+        kb_context = search_knowledge_base(prompt)
+    except Exception as e:
+        print(f"知识库检索异常: {e}")
+        kb_context = ""
 
-    # 3. 核心路由决策
-    # 如果命中了时效性词，或者本地知识库翻箱倒柜只找出了一堆空气（字数极少）
-    if is_realtime_query or not kb_context or len(kb_context.strip()) < 15:
-        reason = "命中时效词" if is_realtime_query else "本地知识库未匹配到有效内容"
-        print(f"🔄因【{reason}】，正在强制切换至【全网实时搜索】模式 -> 关键词: {prompt}")
+    # 2. 极简路由决策：判断知识库是否真的掏出了干货
+    # 如果没货（或者字数少于 15 个字），直接触发全网搜索
+    if not kb_context or len(kb_context.strip()) < 15:
+        print(f"🔄本地知识库未命中，强制启动【全网实时搜索】 -> 提问: {prompt}")
         
-        # 抓取全网最新数据
         web_context = get_web_search_context(prompt)
-        
         system_role_desc = (
             "你是一个微信公众号的智能助手。当前处于【全网实时搜索】模式。\n"
-            "请严格参考以下【联网搜索资料】来解答用户的问题。你可以合理整合网络最新的搜索结果，"
+            "请严格参考以下【联网搜索资料】来解答用户的问题。你可以合理整合网络最新结果，"
             "并在回答末尾附上你参考过的原文链接。\n"
-            "如果联网资料不足以回答，请结合你自身的通用知识进行合理解答。\n\n"
+            "如果联网资料依然不足以回答，请尽情结合你自身的通用知识库进行详尽解答。\n\n"
             f"【联网搜索资料】开始：\n{web_context}\n【联网搜索资料】结束。"
         )
     else:
-        # 知识库有料，正常走本地私有知识库问答
-        print(f"📚本地知识库匹配成功（长度: {len(kb_context)}），走【私有知识库】问答模式")
+        # 知识库里有货，老老实实走私有知识问答
+        print(f"📚本地知识库命中（长度: {len(kb_context)}），走【私有知识库】模式")
         system_role_desc = (
-            "你是一个微信公众号的专属答疑助手。请优先参考下面提供的【知识库参考资料】来解答用户的问题。\n"
+            "你是一个微信公众号的专属答疑助手。请优先参考下面提供的【知识库参考资料】来解答。\n"
             "如果参考资料中包含了答案，请优先基于资料内容进行专业、详尽的回答。\n"
-            "如果知识库与问题无关，请直接使用你的通用知识库进行自然、友好的回答。\n\n"
+            "如果知识库与问题无关，请直接使用你的通用知识进行自然、友好的回答。\n\n"
             f"【知识库参考资料】开始：\n{kb_context}\n【知识库参考资料】结束。"
         )
 
-    # 4. 组装历史记录
+    # 3. 组装历史记录
     with pool_lock:
         if user_id not in history_pool:
             history_pool[user_id] = []
@@ -144,16 +132,17 @@ def fetch_llm(user_id, prompt):
         current_messages = list(history_pool[user_id])
         task_pool[user_id] = {"status": "processing", "result": ""}
     
+    # 压入系统提示词
     system_prompt = {"role": "system", "content": system_role_desc}
     messages_to_send = [system_prompt] + current_messages
 
     payload = {
-        "model": MODEL,
+        "model": MODEL, 
         "messages": messages_to_send,
         "max_tokens": MAX_TOKENS
     }
     
-    # 5. 向 Cloudflare 发起最终请求
+    # 4. 向大模型发起最终请求
     try:
         res = requests.post(API_URL, json=payload, headers={"Authorization": f"Bearer {API_KEY}"}, timeout=120)
         
@@ -172,9 +161,9 @@ def fetch_llm(user_id, prompt):
             raise Exception(f"HTTP {res.status_code}: {res.text}")
             
     except Exception as e:
-        print(f"大模型请求失败: {e}")
+        print(f"请求失败: {e}")
         with pool_lock:
-            task_pool[user_id]["result"] = f"大模型精加工失败，错误原因: {str(e)}"
+            task_pool[user_id]["result"] = f"处理失败，错误原因: {str(e)}"
             task_pool[user_id]["status"] = "error"
             if history_pool[user_id] and history_pool[user_id][-1]["role"] == "user":
                 history_pool[user_id].pop()
