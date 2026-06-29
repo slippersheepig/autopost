@@ -178,7 +178,7 @@ def fetch_llm(user_id, prompt):
     try:
         res = requests.post(API_URL, json=payload, headers={"Authorization": f"Bearer {API_KEY}"}, timeout=120)
         data = res.json()
-        response_text = data["result"]["response"]
+        response_text = data["choices"][0]["message"]["content"]
         
         with pool_lock:
             history_pool[user_id].append({"role": "assistant", "content": response_text})
@@ -293,13 +293,11 @@ def ask_question():
         
     user_id = data.get("user_id")
     text = data.get("text")
-
-    use_search = data.get("use_search", False)
     
     if not user_id or not text:
         return jsonify({"msg": "error", "error": "Missing user_id or text"}), 400
 
-    thread = threading.Thread(target=fetch_llm, args=(user_id, text, use_search))
+    thread = threading.Thread(target=fetch_llm, args=(user_id, text))
     thread.start()
     
     return jsonify({"msg": "ok"})
