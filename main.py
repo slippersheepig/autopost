@@ -84,48 +84,6 @@ def get_web_search_context(query):
         return ""
 
 # ==========================================
-# 新增：意图分析路由器 (Intent Router)
-# ==========================================
-def analyze_intent(query):
-    """
-    调用极速小模型，判断用户意图是否需要联网。
-    返回 True (需要联网) 或 False (查知识库/闲聊)
-    """
-    # 强制使用速度最快的 8B 模型作为路由，不消耗主模型算力
-    router_model = "@cf/meta/llama-3.1-8b-instruct-fp8"
-    ai_url = f"https://api.cloudflare.com/client/v4/accounts/{CF_ACCOUNT_ID}/ai/run/{router_model}"
-    headers = {"Authorization": f"Bearer {CF_API_TOKEN}"}
-    
-    # 极其严苛的系统提示词，逼迫模型只输出 YES 或 NO
-    router_prompt = (
-        "你是一个意图识别引擎。你的任务是判断用户的提问是否需要通过互联网搜索引擎获取最新资讯、"
-        "实时数据、或是超出常规知识库的广泛网络信息。\n"
-        "如果需要联网搜索，请严格且仅输出一个词：YES。\n"
-        "如果是常规问答、闲聊、或者你认为本地知识库可能包含的内容，请严格且仅输出一个词：NO。\n"
-        "不要输出任何标点符号和其他解释。"
-    )
-    
-    payload = {
-        "messages": [
-            {"role": "system", "content": router_prompt},
-            {"role": "user", "content": query}
-        ],
-        "max_tokens": 5, # 极小 token，保证光速响应
-        "temperature": 0.1 # 降到最低，保证输出的确定性
-    }
-    
-    try:
-        res = requests.post(ai_url, headers=headers, json=payload, timeout=5)
-        if res.status_code == 200:
-            decision = res.json()["result"]["response"].strip().upper()
-            print(f"🚦意图路由判断结果: {decision} | 用户问题: {query}")
-            return "YES" in decision
-        return False
-    except Exception as e:
-        print(f"路由判断异常: {e}")
-        return False # 异常情况下，默认走本地知识库或闲聊
-
-# ==========================================
 # 升级：确定性 RAG Fallback（知识库优先 -> 无果则联网）
 # ==========================================
 def fetch_llm(user_id, prompt):
