@@ -190,7 +190,12 @@ def fetch_llm(user_id, prompt):
                 history_pool[user_id].append({"role": "assistant", "content": response_text})
                 if len(history_pool[user_id]) > MAX_HISTORY:
                     history_pool[user_id] = history_pool[user_id][-MAX_HISTORY:]
-                task_pool[user_id]["result"] = response_text
+
+                # 给用户展示用的结果（存入 task_pool 等待微信服务器拉取）
+                # 只有在这里，才调用降维清洗函数
+                cleaned_text_for_user = clean_markdown_for_wechat(response_text)
+                
+                task_pool[user_id]["result"] = cleaned_text_for_user
                 task_pool[user_id]["status"] = "done"
         else:
             raise Exception(f"HTTP {res.status_code}: {res.text}")
@@ -267,9 +272,8 @@ def generate_image(user_id, prompt):
             task_pool[user_id]["status"] = "error"
 
 # ==========================================
-# 路由修改与新增
-# ==========================================
 # 画图专用入口
+# ==========================================
 @app.route('/draw', methods=['POST'])
 def draw_image():
     if not verify_auth():
