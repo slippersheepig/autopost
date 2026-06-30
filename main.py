@@ -41,7 +41,25 @@ def clean_markdown_for_wechat(md_text):
     
     text = md_text
 
-    # 处理大模型最爱用的 LaTeX 符号
+    # 1. 清理 LaTeX 公式界定符 (如 \[ \], \( \), $$, $)
+    # 剥去外衣，释放里面的纯文本和指令
+    text = re.sub(r'\\\[(.*?)\\\]', r'\1', text, flags=re.DOTALL)
+    text = re.sub(r'\\\((.*?)\\\)', r'\1', text)
+    text = re.sub(r'\$\$(.*?)\$\$', r'\1', text, flags=re.DOTALL)
+    text = re.sub(r'(?<!\d)\$([^\$\n]+?)\$(?!\d)', r'\1', text)
+
+    # 2. 清除 LaTeX 内联文本包裹器 \text{...}, \textbf{...}, \mathbf{...} 等
+    text = re.sub(r'\\(?:text|textbf|mathbf|emph|textit|underline)\{([^}]+)\}', r'\1', text)
+
+    # 3. 处理带文字的延展箭头
+    text = re.sub(r'\\xrightarrow\{([^}]+)\}', r' ——[\1]——> ', text)
+    text = re.sub(r'\\xleftarrow\{([^}]+)\}', r' <——[\1]—— ', text)
+    text = re.sub(r'\\xleftrightarrow\{([^}]+)\}', r' <——[\1]——> ', text)
+
+    # 4. 处理常见分数 \frac{A}{B} 转换为 A/B
+    text = re.sub(r'\\frac\{([^}]+)\}\{([^}]+)\}', r'\1/\2', text)
+
+    # 5. 处理大模型最爱用的静态 LaTeX 数学符号
     latex_symbols = {
         r'\\rightarrow': '→',
         r'\\leftarrow': '←',
@@ -57,46 +75,39 @@ def clean_markdown_for_wechat(md_text):
         r'\\ge(q)?': '≥',
         r'\\le(q)?': '≤',
         r'\\approx': '≈',
-        r'\\neq': '≠'
+        r'\\neq': '≠',
+        r'\\cdot': '·'
     }
     
-    # 循环替换所有数学符号（兼容被 $ 包裹和没被 $ 包裹的情况）
     for latex, unicode_char in latex_symbols.items():
-        pattern = r'\$?' + latex + r'\$?'
-        text = re.sub(pattern, unicode_char, text)
-        
-    # 2. 清除 LaTeX 公式界定符 (如 \[ \], \( \), $$, $)
-    text = re.sub(r'\\\[(.*?)\\\]', r'\1', text, flags=re.DOTALL)
-    text = re.sub(r'\\\((.*?)\\\)', r'\1', text)
-    text = re.sub(r'\$\$(.*?)\$\$', r'\1', text, flags=re.DOTALL)
-    # 处理单 $，使用负向先行/后行断言，防止误杀货币表达式 (如 $100)
-    text = re.sub(r'(?<!\d)\$([^\$\n]+?)\$(?!\d)', r'\1', text)
+        # (?![a-zA-Z]) 防止误杀变体命令
+        text = re.sub(latex + r'(?![a-zA-Z])', unicode_char, text)
 
-    # 3. 转换超链接: [文字](URL) -> <a href="URL">文字</a>
+    # 6. 转换超链接: [文字](URL) -> <a href="URL">文字</a>
     text = re.sub(r'\[([^\]]+)\]\((http[s]?://[^\)]+)\)', r'<a href="\2">\1</a>', text)
     
-    # 4. 转换标题: ### 标题 -> 【标题】
+    # 7. 转换标题: ### 标题 -> 【标题】
     text = re.sub(r'^#+\s+(.*)$', r'【\1】', text, flags=re.MULTILINE)
     
-    # 5. 移除加粗、斜体和删除线符号
+    # 8. 移除加粗、斜体和删除线符号
     text = re.sub(r'\*\*(.*?)\*\*', r'\1', text)
     text = re.sub(r'\*(.*?)\*', r'\1', text)
     text = re.sub(r'~~(.*?)~~', r'\1', text)
     
-    # 6. 优化无序列表 (支持 -, *, +)
+    # 9. 优化无序列表 (支持 -, *, +)
     text = re.sub(r'^\s*[-*+]\s+', '• ', text, flags=re.MULTILINE)
     
-    # 7. 优化引用块 (将 > 替换为竖线，视觉上模拟引用效果)
+    # 10. 优化引用块 (将 > 替换为竖线，视觉上模拟引用效果)
     text = re.sub(r'^\s*>\s+(.*)$', r'| \1', text, flags=re.MULTILINE)
 
-    # 8. 清理多行代码块记号
+    # 11. 清理多行代码块记号
     text = re.sub(r'```[a-zA-Z]*\n', '\n', text)
     text = re.sub(r'```', '', text)
     
-    # 9. 清理行内单反引号 (`result` -> result)
+    # 12. 清理行内单反引号 (`result` -> result)
     text = re.sub(r'`([^`]+)`', r'\1', text)
     
-    # 10. 处理多余的连续换行，保持聊天气泡排版紧凑
+    # 13. 处理多余的连续换行，保持聊天气泡排版紧凑
     text = re.sub(r'\n{3,}', '\n\n', text)
     
     return text.strip()
