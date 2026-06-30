@@ -41,37 +41,66 @@ def clean_markdown_for_wechat(md_text):
     
     text = md_text
 
-    # 1. 处理 LaTeX 常见符号
-    # 把 $\rightarrow$, \rightarrow, -> 等都统一替换成漂亮的 Unicode 箭头
-    text = re.sub(r'\$?\\rightarrow\$?', '→', text)
-    text = re.sub(r'\$?\\leftarrow\$?', '←', text)
-    text = re.sub(r'\$?\\Rightarrow\$?', '⇒', text)
+    # 处理大模型最爱用的 LaTeX 符号
+    latex_symbols = {
+        r'\\rightarrow': '→',
+        r'\\leftarrow': '←',
+        r'\\leftrightarrow': '↔',
+        r'\\Rightarrow': '⇒',
+        r'\\Leftarrow': '⇐',
+        r'\\Leftrightarrow': '⇔',
+        r'\\uparrow': '↑',
+        r'\\downarrow': '↓',
+        r'\\times': '×',
+        r'\\div': '÷',
+        r'\\pm': '±',
+        r'\\ge(q)?': '≥',
+        r'\\le(q)?': '≤',
+        r'\\approx': '≈',
+        r'\\neq': '≠'
+    }
     
-    # 2. 转换超链接: [文字](URL) -> <a href="URL">文字</a>
+    # 循环替换所有数学符号（兼容被 $ 包裹和没被 $ 包裹的情况）
+    for latex, unicode_char in latex_symbols.items():
+        pattern = r'\$?' + latex + r'\$?'
+        text = re.sub(pattern, unicode_char, text)
+        
+    # 2. 清除 LaTeX 公式界定符 (如 \[ \], \( \), $$, $)
+    text = re.sub(r'\\\[(.*?)\\\]', r'\1', text, flags=re.DOTALL)
+    text = re.sub(r'\\\((.*?)\\\)', r'\1', text)
+    text = re.sub(r'\$\$(.*?)\$\$', r'\1', text, flags=re.DOTALL)
+    # 处理单 $，使用负向先行/后行断言，防止误杀货币表达式 (如 $100)
+    text = re.sub(r'(?<!\d)\$([^\$\n]+?)\$(?!\d)', r'\1', text)
+
+    # 3. 转换超链接: [文字](URL) -> <a href="URL">文字</a>
     text = re.sub(r'\[([^\]]+)\]\((http[s]?://[^\)]+)\)', r'<a href="\2">\1</a>', text)
     
-    # 3. 转换标题: ### 标题 -> 【标题】
+    # 4. 转换标题: ### 标题 -> 【标题】
     text = re.sub(r'^#+\s+(.*)$', r'【\1】', text, flags=re.MULTILINE)
     
-    # 4. 移除加粗和斜体符号
+    # 5. 移除加粗、斜体和删除线符号
     text = re.sub(r'\*\*(.*?)\*\*', r'\1', text)
     text = re.sub(r'\*(.*?)\*', r'\1', text)
+    text = re.sub(r'~~(.*?)~~', r'\1', text)
     
-    # 5. 优化无序列表
-    text = re.sub(r'^\s*[-*]\s+', '• ', text, flags=re.MULTILINE)
+    # 6. 优化无序列表 (支持 -, *, +)
+    text = re.sub(r'^\s*[-*+]\s+', '• ', text, flags=re.MULTILINE)
     
-    # 6. 清理代码块记号
+    # 7. 优化引用块 (将 > 替换为竖线，视觉上模拟引用效果)
+    text = re.sub(r'^\s*>\s+(.*)$', r'| \1', text, flags=re.MULTILINE)
+
+    # 8. 清理多行代码块记号
     text = re.sub(r'```[a-zA-Z]*\n', '\n', text)
     text = re.sub(r'```', '', text)
-
-    # 7. 清理行内单反引号
+    
+    # 9. 清理行内单反引号 (`result` -> result)
     text = re.sub(r'`([^`]+)`', r'\1', text)
     
-    # 8. 处理多余的连续换行
+    # 10. 处理多余的连续换行，保持聊天气泡排版紧凑
     text = re.sub(r'\n{3,}', '\n\n', text)
     
     return text.strip()
-
+    
 def find_smart_split_index(text, max_length=600):
     """智能寻找前 max_length 个字符中最合适的标点符号进行断句"""
     if len(text) <= max_length:
