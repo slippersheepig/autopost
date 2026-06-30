@@ -63,11 +63,33 @@ def clean_markdown_for_wechat(md_text):
     # 6. 清理代码块记号
     text = re.sub(r'```[a-zA-Z]*\n', '\n', text)
     text = re.sub(r'```', '', text)
+
+    # 7. 清理行内单反引号
+    text = re.sub(r'`([^`]+)`', r'\1', text)
     
-    # 7. 处理多余的连续换行
+    # 8. 处理多余的连续换行
     text = re.sub(r'\n{3,}', '\n\n', text)
     
     return text.strip()
+
+def find_smart_split_index(text, max_length=500):
+    """智能寻找前 max_length 个字符中最合适的标点符号进行断句"""
+    if len(text) <= max_length:
+        return len(text)
+        
+    segment = text[:max_length]
+    # 定义标点符号的优先级（双换行最高，逗号最低）
+    punctuation_marks = ['\n\n', '\n', '。', '！', '？', '.', '!', '?', '；', ';', '，', ',']
+    
+    for punct in punctuation_marks:
+        # 从右向左找，找到这段话里最后一个该类型的标点
+        split_index = segment.rfind(punct)
+        if split_index != -1:
+            # 切割点包含标点符号本身
+            return split_index + len(punct)
+            
+    # 如果极端情况下 500 字里一个标点都没有，就只能强行硬切
+    return max_length
 
 def search_knowledge_base(query_text):
     """从 Cloudflare Vectorize 搜索最相关的文本"""
@@ -335,10 +357,12 @@ def get_result():
             CHUNK_SIZE = 500
             
             if len(res) > CHUNK_SIZE:
-                # 截取前 500 个字符发给用户
-                chunk = res[:CHUNK_SIZE]
+                # 调用智能断句函数
+                split_index = find_smart_split_index(res, CHUNK_SIZE)
+                # 截取到标点符号处，发给用户
+                chunk = res[:split_index].strip()
                 # 把剩下的内容重新存回任务池，等待用户下一次取件
-                task["result"] = res[CHUNK_SIZE:]
+                task["result"] = res[split_index:].strip()
                 return jsonify({
                     "status": "done", 
                     "data": chunk + "\n\n...(字数超限，请再次发送『ai 取件』（ai后面有空格）获取剩余内容)"
