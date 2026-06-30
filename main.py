@@ -72,7 +72,7 @@ def clean_markdown_for_wechat(md_text):
     
     return text.strip()
 
-def find_smart_split_index(text, max_length=500):
+def find_smart_split_index(text, max_length=600):
     """智能寻找前 max_length 个字符中最合适的标点符号进行断句"""
     if len(text) <= max_length:
         return len(text)
@@ -88,7 +88,7 @@ def find_smart_split_index(text, max_length=500):
             # 切割点包含标点符号本身
             return split_index + len(punct)
             
-    # 如果极端情况下 500 字里一个标点都没有，就只能强行硬切
+    # 如果极端情况下 600 字里一个标点都没有，就只能强行硬切
     return max_length
 
 def search_knowledge_base(query_text):
@@ -353,8 +353,7 @@ def get_result():
         if task["status"] in ["done", "error"]:
             res = task["result"]
             
-            # 微信单条被动回复最多约 600 汉字，为了绝对安全，按 500 字切片
-            CHUNK_SIZE = 500
+            CHUNK_SIZE = 600
             
             if len(res) > CHUNK_SIZE:
                 # 调用智能断句函数
@@ -368,7 +367,7 @@ def get_result():
                     "data": chunk + "\n\n...(字数超限，请再次发送『ai 取件』（ai后面有空格）获取剩余内容)"
                 })
             else:
-                # 如果字数小于 500，一次性发完并彻底销毁任务
+                # 如果字数小于 600，一次性发完并彻底销毁任务
                 del task_pool[user_id]
                 return jsonify({"status": "done", "data": res})
 
